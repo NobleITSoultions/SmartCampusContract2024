@@ -1,0 +1,424 @@
+"""
+These are prototype smart contracts written in the SmartPy meta-Python programming language that can
+be deployed on the Tezos blockchain testnet using this online IDE using this link https://smartpy.io/ide.
+They are a proof of concept on a Smart Campus Architectural Framework which leverages blockchain technology
+for information security. 
+The smart contract is titled 'SmartCampus', it handles the management and verification of administrators, students, 
+teaching and non-teaching staff. It is also used to manage the Library and Item Procurement in a smart and decentralized manner.
+
+"""
+
+import smartpy as sp
+
+@sp.module
+def main():
+    class SmartCampus(sp.Contract):
+        def __init__(self,campus_admin):
+            # Administration Database
+            self.data.campus_admin = campus_admin
+            self.data.students = sp.cast(sp.set(),sp.set[sp.address]) # Set of student addresses
+            self.data.teaching_staff = sp.cast(sp.set(),sp.set[sp.address]) # Set of teaching staff addresses
+            self.data.non_teaching_staff = sp.cast(sp.set(),sp.set[sp.address]) # Set of non teaching staff addresses
+            # Library Database
+            self.data.lib_admins = sp.cast(sp.set(),sp.set[sp.address]) # Set of library admins
+            self.data.lib_books = sp.cast(sp.set(),sp.set[sp.string]) # Set of ids of the library's books 
+            self.data.lib_books_collected = sp.cast(sp.big_map(),sp.big_map[
+                sp.string,sp.map[sp.address,sp.record(confirm=sp.timestamp,confirm_by=sp.address,request=sp.timestamp)]]) # Map of books pending or confirmed to be collected
+            self.data.lib_books_returned = sp.cast(sp.big_map(),sp.big_map[
+                sp.string,sp.map[sp.address,sp.record(confirm=sp.timestamp,confirm_by=sp.address,request=sp.timestamp)]]) # Map of books pending or confirmed to be returned
+            # Item Procurement Database
+            self.data.i_p_admins = sp.cast(sp.set(),sp.set[sp.address]) # Set of item procurement admins
+            self.data.items = sp.cast(sp.set(),sp.set[sp.string]) # Set of ids of procurement items 
+            self.data.items_collected = sp.cast(sp.big_map(),sp.big_map[
+                sp.string,sp.map[sp.address,sp.record(confirm=sp.timestamp,confirm_by=sp.address,request=sp.timestamp)]]) # Map of items pending or confirmed to be collected
+            self.data.items_returned = sp.cast(sp.big_map(),sp.big_map[
+                sp.string,sp.map[sp.address,sp.record(confirm=sp.timestamp,confirm_by=sp.address,request=sp.timestamp)]]) # Map of items pending or confirmed to be returned
+            # Grades and Fees Database
+            self.data.grades =  sp.cast(sp.big_map(), sp.big_map[sp.address,sp.map[
+                sp.string, sp.map[sp.string,sp.record(grade=sp.string,teacher=sp.address)]]]) # Map of student grades
+            self.data.fees = sp.cast(sp.big_map(), sp.big_map[sp.address,sp.map[
+                sp.string, sp.record(fee_due = sp.string, fee_paid = sp.string, verified_by = sp.address)]]) # Map of student fees
+            
+        """
+        These entrypoints require the campus admin to change the Administration Database:
+        1. register_student                  Line 52
+        2. register_teaching_staff           Line 58
+        3. register_non_teaching_staff       Line 64
+        4. register_campus_admin             Line 70
+        5. register_lib_admin                Line 76
+        6. register_i_p_admin                Line 82
+        """  
+        @sp.entrypoint
+        def register_student(self,student):
+            sp.cast(student,sp.address)
+            assert sp.sender == self.data.campus_admin, "Only Campus Administrator can register students."
+            self.data.students.add(student)
+
+        @sp.entrypoint
+        def register_teaching_staff(self,teaching_staff):
+            sp.cast(teaching_staff,sp.address)
+            assert sp.sender == self.data.campus_admin, "Only Campus Administrator can register students."
+            self.data.teaching_staff.add(teaching_staff)
+
+        @sp.entrypoint
+        def register_non_teaching_staff(self,non_teaching_staff):
+            sp.cast(non_teaching_staff,sp.address)
+            assert sp.sender == self.data.campus_admin, "Only Campus Administrator can register students."
+            self.data.non_teaching_staff.add(non_teaching_staff)
+
+        @sp.entrypoint
+        def register_campus_admin(self,campus_admin):
+            sp.cast(campus_admin,sp.address)
+            assert sp.sender == self.data.campus_admin, "Only Campus Administrator can register students."
+            self.data.campus_admin = campus_admin                
+
+        @sp.entrypoint
+        def register_lib_admin(self,lib_admin):
+            sp.cast(lib_admin,sp.address)
+            assert sp.sender == self.data.campus_admin, "Only Campus Administrator can register students."
+            self.data.lib_admins.add(lib_admin)
+
+        @sp.entrypoint
+        def register_i_p_admin(self,i_p_admin):
+            sp.cast(i_p_admin,sp.address)
+            assert sp.sender == self.data.campus_admin, "Only Campus Administrator can register students."
+            self.data.i_p_admins.add(i_p_admin)
+
+                    
+        """
+        These entrypoints require the library admin or valid student to change the Library Database:
+        6. add_lib_book                      Line 97
+        7. post_collect_book_request         Line 105
+        8. confirm_collect_book_request      Line 114
+        9. post_return_book_notice           Line 124
+        10. confirm_return_book_notice       Line 132
+        """  
+        @sp.entrypoint
+        def add_lib_book(self,book):
+            sp.cast(book,sp.string)
+            assert self.data.lib_admins.contains(sp.sender), "Only Library Administrators can add books!"
+            assert not self.data.lib_books.contains(book), "Book is already in the library!"
+            self.data.lib_books.add(book)
+        
+        
+        @sp.entrypoint
+        def post_collect_book_request(self,book):
+            sp.cast(book,sp.string)
+            assert self.data.students.contains(sp.sender), "Only Registered students can post requests!"
+            assert self.data.lib_books.contains(book), "Book doesn't exist in library!"
+            if self.data.lib_books_collected.contains(book):
+                assert not self.data.lib_books_collected[book].contains(sp.sender), "You have a pending request already!"
+            else:
+                self.data.lib_books_collected[book] = {}
+            self.data.lib_books_collected[book][sp.sender] = sp.record(request=sp.now,confirm=sp.timestamp(0),confirm_by=sp.sender)
+
+        @sp.entrypoint
+        def confirm_collect_book_request(self,book,student):
+            sp.cast(book,sp.string)
+            sp.cast(student,sp.address)
+            assert self.data.lib_admins.contains(sp.sender), "Only Library Administrators can confirm requests"
+            assert self.data.students.contains(student), "Student is not registered!"
+            assert self.data.lib_books.contains(book), "Book doesn't exist in library!"
+            assert self.data.lib_books_collected[book].contains(student), "The student has no pending request!"
+            self.data.lib_books_collected[book][student].confirm = sp.now
+            self.data.lib_books_collected[book][student].confirm_by = sp.sender
+
+        @sp.entrypoint
+        def post_return_book_notice(self,book):
+            sp.cast(book,sp.string)
+            assert self.data.students.contains(sp.sender), "Student is not registered!"
+            assert self.data.lib_books.contains(book), "Book doesn't exist in library!"
+            assert self.data.lib_books_collected[book].contains(sp.sender), "You don't have a confirmed book request!"
+            self.data.lib_books_returned[book] = {
+                sp.sender : sp.record(request=sp.now,confirm=sp.timestamp(0),confirm_by=sp.sender)}
+
+        @sp.entrypoint
+        def confirm_return_book_notice(self,book,student):
+            sp.cast(book,sp.string)
+            sp.cast(student,sp.address)
+            assert self.data.lib_admins.contains(sp.sender), "Only Library Administrators can confirm requests"
+            assert self.data.students.contains(student), "Student is not registered!"
+            assert self.data.lib_books.contains(book), "Book doesn't exist in library!"
+            assert self.data.lib_books_returned[book].contains(student), "You don't have a pending return notice!"
+            self.data.lib_books_returned[book][student].confirm = sp.now
+            self.data.lib_books_returned[book][student].confirm_by = sp.sender
+    
+        """
+        These entrypoints require the item procurement admin or valid student to change the Item Procurement Database:
+        11. add_item                          Line 151
+        12. post_collect_item_request         Line 159
+        13. confirm_collect_item_request      Line 168
+        14. post_return_item_notice           Line 178
+        15. confirm_return_item_notice        Line 186
+        """  
+        @sp.entrypoint
+        def add_item(self,item):
+            sp.cast(item,sp.string)
+            assert self.data.i_p_admins.contains(sp.sender), "Only Procurement Administrators can add items!"
+            assert not self.data.items.contains(item), "Item is already procured!"
+            self.data.items.add(item)
+
+        @sp.entrypoint
+        def post_collect_item_request(self,item):
+            sp.cast(item,sp.string)
+            assert self.data.students.contains(sp.sender), "Only Registered students can post requests!"
+            assert self.data.items.contains(item), "Item doesn't exist in procurement!"
+            if self.data.items_collected.contains(item):
+                assert not self.data.items_collected[item].contains(sp.sender), "You have a pending request already!"       
+            else:
+                self.data.items_collected[item] = {}    
+            self.data.items_collected[item][sp.sender] =sp.record(request=sp.now,confirm=sp.timestamp(0),confirm_by=sp.sender)
+
+        @sp.entrypoint
+        def confirm_collect_item_request(self,item,student):
+            sp.cast(item,sp.string)
+            sp.cast(student,sp.address)            
+            assert self.data.i_p_admins.contains(sp.sender), "Only Procurement Administrators can confirm requests"
+            assert self.data.students.contains(student), "Student is not registered!"
+            assert self.data.items.contains(item), "Item doesn't exist in procurement!"
+            assert self.data.items_collected[item].contains(student), "The student has no pending request!"
+            self.data.items_collected[item][student].confirm = sp.now
+            self.data.items_collected[item][student].confirm_by = sp.sender
+
+        @sp.entrypoint
+        def post_return_item_notice(self,item):
+            sp.cast(item,sp.string)
+            assert self.data.students.contains(sp.sender), "Student is not registered!"
+            assert self.data.items.contains(item), "Item doesn't exist in procurement!"
+            assert self.data.items_collected[item].contains(sp.sender), "You don't have a confirmed item request!"
+            self.data.items_returned[item] = {
+                sp.sender : sp.record(request=sp.now,confirm=sp.timestamp(0),confirm_by=sp.sender)}
+
+        @sp.entrypoint
+        def confirm_return_item_notice(self,item,student):
+            sp.cast(item,sp.string)
+            sp.cast(student,sp.address)
+            assert self.data.i_p_admins.contains(sp.sender), "Only Procurement Administrators can confirm requests"
+            assert self.data.students.contains(student), "Student is not registered!"
+            assert self.data.items.contains(item), "Item doesn't exist in procurement!"
+            assert self.data.items_returned[item].contains(student), "You don't have a pending return notice!"
+            self.data.items_returned[item][student].confirm = sp.now
+            self.data.items_returned[item][student].confirm_by = sp.sender
+        
+        """
+        These entrypoints require the campus admin or teaching staff to change the Grade Database:
+        16. add_grade               Line 202
+        17. change_grade            Line 220
+        """  
+        @sp.entrypoint
+        def add_grade(self,student,year,course,grade):
+            sp.cast(student,sp.address)
+            sp.cast(year,sp.string)
+            sp.cast(course,sp.string)
+            sp.cast(grade,sp.string)
+            assert self.data.students.contains(student), "Only Registered students can be graded!"
+            assert self.data.teaching_staff.contains(sp.sender), "Only Teaching staff can add grades!"
+            if not self.data.grades.contains(student):
+                self.data.grades[student] = {}
+            if not self.data.grades[student].contains(year):
+                self.data.grades[student][year] = {}
+            if self.data.grades.contains(student):
+                if self.data.grades[student].contains(year):
+                    assert not self.data.grades[student][year].contains(course), "Course is already graded!"
+            
+            self.data.grades[student][year][course] = sp.record(teacher=sp.sender,grade=grade)
+        
+        @sp.entrypoint
+        def change_grade(self,student,year,course,teacher,grade):
+            sp.cast(student,sp.address)
+            sp.cast(teacher,sp.address)
+            sp.cast(year,sp.string)
+            sp.cast(course,sp.string)
+            sp.cast(grade,sp.string)
+            assert self.data.students.contains(student), "Only Registered students can be graded!"
+            assert self.data.campus_admin == sp.sender, "Only Campus Admin can change grades!"
+            assert self.data.grades[student][year].contains(course), "Course hasn't been graded!"
+            self.data.grades[student][year][course].grade = grade
+
+
+        """
+        This entrypoint requires non-teaching staff to change the Fee Database:
+        16. add_fee_due_paid      Line 237
+        """  
+        @sp.entrypoint
+        def add_fee_due_paid(self,student,year,fee,paid):
+            sp.cast(student,sp.address)
+            sp.cast(year,sp.string)
+            sp.cast(fee,sp.string)
+            sp.cast(paid,sp.string)
+            assert self.data.students.contains(student), "Student is not registered!"
+            assert self.data.non_teaching_staff.contains(sp.sender), "Only Non-Teaching staff can add fees!"
+            if not self.data.fees.contains(student):
+                self.data.fees[student] = {}
+            self.data.fees[student][year] =  sp.record(verified_by=sp.sender,fee_due=fee,fee_paid=paid)#{sp.sender:{'fee_due':fee,'fee_paid':paid}}
+        
+    
+
+@sp.add_test(name = "SmartCampus")
+def test():
+    # Create accounts for all user types
+    _admin1 = sp.test_account("Administrator 1")
+    _admin2 = sp.test_account("Administrator 2")
+    _lib_admin1 = sp.test_account("Library Administrator 1")
+    _lib_admin2 = sp.test_account("Library Administrator 2")
+    _i_p_admin1 = sp.test_account("Item Procurement Administrator 1")
+    _i_p_admin2 = sp.test_account("Item Procurement Administrator 2")
+    _student1 = sp.test_account("Student 1")
+    _student2 = sp.test_account("Student 2")
+    _teacher1 = sp.test_account("Teacher 1")
+    _teacher2 = sp.test_account("Teacher 2")
+    _non_teacher1 = sp.test_account("Non Teacher 1")
+    _non_teacher2 = sp.test_account("Non Teacher 2")
+    _invalid_user = sp.test_account("Invalid User")
+    
+    # Create variables for account addresses
+    admin1 = _admin1.address
+    admin2 = _admin2.address
+    lib_admin1 = _lib_admin1.address
+    lib_admin2 = _lib_admin2.address
+    i_p_admin1 = _i_p_admin1.address
+    i_p_admin2 = _i_p_admin2.address
+    student1 = _student1.address
+    student2 = _student2.address
+    teacher1 = _teacher1.address
+    teacher2 = _teacher2.address
+    non_teacher1 = _non_teacher1.address
+    non_teacher2 = _non_teacher2.address
+    invalid_user = _invalid_user.address
+    
+    # Create test scenario
+    scenario = sp.test_scenario(main)
+    SmartCampus = main.SmartCampus(admin1)
+    scenario += SmartCampus
+    scenario.h1("PROOF OF CONCEPT FOR SMART CAMPUS CONCEPTUAL FRAMEWORK")
+    scenario.h2("Show all accounts used for test scenario")
+    scenario.show([
+        _admin1,_admin2,_lib_admin1,_lib_admin2,_i_p_admin1,_i_p_admin2,
+        _student1,_student2,_teacher1,_teacher2,
+        _non_teacher1,_non_teacher2,_invalid_user
+    ])
+    scenario.h2("Registration of accounts by Campus Admin")
+    scenario.h3("Registration of 2 Students")
+    
+    # Test registration of valid users
+    SmartCampus.register_student(student1).run(sender=admin1)
+    SmartCampus.register_student(student2).run(sender=admin1)
+    scenario.h3("Registration of 2 Teaching Staff members")
+    SmartCampus.register_teaching_staff(teacher1).run(sender=admin1)
+    SmartCampus.register_teaching_staff(teacher2).run(sender=admin1)
+    scenario.h3("Registration of 2 Non Teaching Staff Members")
+    SmartCampus.register_non_teaching_staff(non_teacher1).run(sender=admin1)
+    SmartCampus.register_non_teaching_staff(non_teacher2).run(sender=admin1)
+    scenario.h3("Registration of 2 Library Administrators")
+    SmartCampus.register_lib_admin(lib_admin1).run(sender=admin1)
+    SmartCampus.register_lib_admin(lib_admin2).run(sender=admin1)
+    scenario.h3("Registration of 2 Item Procurement Administrators")
+    SmartCampus.register_i_p_admin(i_p_admin1).run(sender=admin1)
+    SmartCampus.register_i_p_admin(i_p_admin2).run(sender=admin1)
+    scenario.h3("Registration of a new Administrator")
+    SmartCampus.register_campus_admin(admin2).run(sender=admin1)
+        
+    # Test Addition of Books by valid and invalid Library Administrators
+    scenario.h3("Registration of 2 books by 2 Library Administrators")
+    SmartCampus.add_lib_book("book1").run(sender=lib_admin1)
+    SmartCampus.add_lib_book("book2").run(sender=lib_admin2)
+    scenario.h3("Registration of a book by Invalid User")
+    SmartCampus.add_lib_book("book3").run(sender=invalid_user,valid=False)
+
+    # Test Addition of Items by valid and invalid Item Procurement Administrators
+    scenario.h3("Registration of 2 items by 2 Item Procurement Administrators")
+    SmartCampus.add_item("item1").run(sender=i_p_admin1)
+    SmartCampus.add_item("item2").run(sender=i_p_admin2)
+    scenario.h3("Registration of a item by Invalid User")
+    SmartCampus.add_item("item3").run(sender=invalid_user,valid=False)
+
+    
+    # Using students for book collection and return
+    
+    # Test both request and confirmation to collect Books by valid and invalid students and administrators
+    scenario.h3("Invalid student posts a collect book request")
+    SmartCampus.post_collect_book_request("book1").run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(1))
+    scenario.h3("Valid student posts an invalid collect book request")
+    SmartCampus.post_collect_book_request("non-existing book").run(sender=student1,valid=False,now=sp.timestamp_from_utc_now().add_seconds(2))
+    scenario.h3("Valid student posts a collect book request")
+    SmartCampus.post_collect_book_request("book1").run(sender=student1,now=sp.timestamp_from_utc_now().add_seconds(3))
+    SmartCampus.post_collect_book_request("book2").run(sender=student2,now=sp.timestamp_from_utc_now().add_seconds(4))
+    scenario.h3("Invalid administrator accepts collect book request")
+    SmartCampus.confirm_collect_book_request(book = "book1",student = student1).run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(4))
+    scenario.h3("Valid administrator accepts collect book request")
+    SmartCampus.confirm_collect_book_request(book = "book1",student = student1).run(sender=lib_admin1,now=sp.timestamp_from_utc_now().add_seconds(5))
+    SmartCampus.confirm_collect_book_request(book = "book2",student = student2).run(sender=lib_admin2,now=sp.timestamp_from_utc_now().add_seconds(6))
+
+    # Test both request and confirmation to notify book returns by valid and invalid students and administrators
+    scenario.h3("Invalid student posts a return book notice")
+    SmartCampus.post_return_book_notice("book1").run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(9))
+    scenario.h3("Valid student posts an invalid return book notice")
+    SmartCampus.post_return_book_notice("non-existing book").run(sender=student1,valid=False,now=sp.timestamp_from_utc_now().add_seconds(10))
+    scenario.h3("Valid student posts a return book notice")
+    SmartCampus.post_return_book_notice("book1").run(sender=student1,now=sp.timestamp_from_utc_now().add_seconds(11))
+    SmartCampus.post_return_book_notice("book2").run(sender=student2,now=sp.timestamp_from_utc_now().add_seconds(12))
+    scenario.h3("Invalid administrator accepts return book notice")
+    SmartCampus.confirm_return_book_notice(book = "book1",student = student1).run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(15))
+    scenario.h3("Valid administrator accepts collect book request")
+    SmartCampus.confirm_return_book_notice(book = "book1",student = student1).run(sender=lib_admin1,now=sp.timestamp_from_utc_now().add_seconds(16))
+    SmartCampus.confirm_return_book_notice(book = "book2",student = student2).run(sender=lib_admin2,now=sp.timestamp_from_utc_now().add_seconds(17))
+    
+    # Using students and item for procurement item collection and return
+    
+    # Test both request and confirmation to collect items by valid and invalid students and administrators
+    scenario.h3("Invalid student posts a collect item request")
+    SmartCampus.post_collect_item_request("item2").run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(18))
+    scenario.h3("Valid student posts an invalid collect item request")
+    SmartCampus.post_collect_item_request("non-existing item").run(sender=student2,valid=False,now=sp.timestamp_from_utc_now().add_seconds(19))
+    scenario.h3("Valid student posts a collect item request")
+    SmartCampus.post_collect_item_request("item1").run(sender=student1,now=sp.timestamp_from_utc_now().add_seconds(20))
+    SmartCampus.post_collect_item_request("item2").run(sender=student2,now=sp.timestamp_from_utc_now().add_seconds(21))
+    scenario.h3("Invalid administrator accepts collect item request")
+    SmartCampus.confirm_collect_item_request(item = "item2",student = student2).run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(21))
+    scenario.h3("Valid administrator accepts collect item request")
+    SmartCampus.confirm_collect_item_request(item = "item1",student = student1).run(sender=i_p_admin1,now=sp.timestamp_from_utc_now().add_seconds(22))
+    SmartCampus.confirm_collect_item_request(item = "item2",student = student2).run(sender=i_p_admin2,now=sp.timestamp_from_utc_now().add_seconds(23))
+
+    # Test both request and confirmation to notify item returns by valid and invalid students and administrators
+    scenario.h3("Invalid student posts a return item notice")
+    SmartCampus.post_return_item_notice("item2").run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(24))
+    scenario.h3("Valid student posts an invalid return item notice")
+    SmartCampus.post_return_item_notice("non-existing item").run(sender=student1,valid=False,now=sp.timestamp_from_utc_now().add_seconds(25))
+    scenario.h3("Valid student posts a return item notice")
+    SmartCampus.post_return_item_notice("item1").run(sender=student1,now=sp.timestamp_from_utc_now().add_seconds(26))
+    SmartCampus.post_return_item_notice("item2").run(sender=student2,now=sp.timestamp_from_utc_now().add_seconds(27))
+    scenario.h3("Invalid administrator accepts return item notice")
+    SmartCampus.confirm_return_item_notice(item = "item2",student = student2).run(sender=invalid_user,valid=False,now=sp.timestamp_from_utc_now().add_seconds(28))
+    scenario.h3("Valid administrator accepts collect item request")
+    SmartCampus.confirm_return_item_notice(item = "item1",student = student1).run(sender=i_p_admin1,now=sp.timestamp_from_utc_now().add_seconds(29))
+    SmartCampus.confirm_return_item_notice(item = "item2",student = student2).run(sender=i_p_admin2,now=sp.timestamp_from_utc_now().add_seconds(30))
+
+    # Test adding and changing grades by teaching staff and campus admin respectively
+    scenario.h3("Invalid teaching staff adds grades to valid student")
+    SmartCampus.add_grade(student=student1,year='2023',course='IT101',grade='A').run(sender=invalid_user,valid=False)
+    scenario.h3("Valid teaching staff adds grades to invalid student")
+    SmartCampus.add_grade(student=invalid_user,year='2023',course='IT101',grade='A').run(sender=teacher1,valid=False)    
+    scenario.h3("Valid teaching staff changes grades of valid student")
+    SmartCampus.add_grade(student=student1,year='2023',course='IT101',grade='A').run(sender=teacher1)
+    SmartCampus.add_grade(student=student1,year='2023',course='IT102',grade='C').run(sender=teacher2)
+    SmartCampus.add_grade(student=student2,year='2023',course='IT101',grade='D').run(sender=teacher1)
+    SmartCampus.add_grade(student=student2,year='2023',course='IT102',grade='B').run(sender=teacher2)
+    SmartCampus.add_grade(student=student1,year='2024',course='BUS101',grade='B').run(sender=teacher1)
+    SmartCampus.add_grade(student=student1,year='2024',course='BUS102',grade='A').run(sender=teacher2)
+    SmartCampus.add_grade(student=student2,year='2024',course='BUS101',grade='A').run(sender=teacher1)
+    SmartCampus.add_grade(student=student2,year='2024',course='BUS102',grade='B').run(sender=teacher2)
+    scenario.h3("Valid admin changes grades of valid student")
+    SmartCampus.change_grade(student=student1,year='2023',course='IT102', teacher=teacher2,grade='E').run(sender=admin2)    
+    SmartCampus.change_grade(student=student2,year='2023',course='IT102', teacher=teacher2,grade='E').run(sender=admin2)    
+        
+    # Test adding and changing student fees due and paid by non-teaching staff
+    scenario.h3("Invalid non-teaching staff adds grades to valid student")
+    SmartCampus.add_fee_due_paid(student=student1,year='2023',fee='100',paid='50').run(sender=invalid_user,valid=False)
+    scenario.h3("Valid teaching staff adds fees to invalid student")
+    SmartCampus.add_fee_due_paid(student=invalid_user,year='2023',fee='100',paid='50').run(sender=non_teacher1,valid=False)    
+    scenario.h3("Valid teaching staff changes fees of valid student")
+    SmartCampus.add_fee_due_paid(student=student1,year='2023',fee='100',paid='50').run(sender=non_teacher1)
+    SmartCampus.add_fee_due_paid(student=student1,year='2024',fee='200',paid='100').run(sender=non_teacher2)
+    SmartCampus.add_fee_due_paid(student=student2,year='2023',fee='200',paid='250').run(sender=non_teacher1)
+    SmartCampus.add_fee_due_paid(student=student2,year='2024',fee='250',paid='100').run(sender=non_teacher2)
+
